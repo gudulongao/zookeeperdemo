@@ -1,2 +1,2 @@
 # zookeeperdemo
-Zookeeper
+Zookeeper java API学习样例代码
