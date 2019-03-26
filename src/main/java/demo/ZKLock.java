@@ -15,12 +15,13 @@ import java.util.concurrent.CountDownLatch;
  * 基于Zookeeper的分布式锁实现
  */
 public class ZKLock {
-    private static long i = 0;
     /**
      * 节点路径 锁的根节点
      */
     private static final String NODEPATH_ROOTLOCK = "/lock";
     private static final String NODENAME_BEGIN = "lock_";
+    private static final String PARAM_CURRSEQ = "currSeq";
+    private static final String PARAM_PRESEQ = "preSeq";
     private static ZKLock lock;
     private ZooKeeper zk;
     private ThreadLocal<Map<String, String>> threadlocal = new ThreadLocal<Map<String, String>>();
@@ -39,34 +40,46 @@ public class ZKLock {
         return lock;
     }
 
+    private static void log(String mess) {
+        System.out.println(System.currentTimeMillis() + " " + Thread.currentThread().getId() + " " + mess);
+    }
+
     public boolean tryLock(String resName) {
         String lockPath = getLockPath(resName);
         try {
             Stat stat = zk.exists(lockPath, null);
             if (stat == null) {
                 zk.create(lockPath, String.valueOf(Boolean.TRUE).getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-                threadlocal.get().put("isFirst", String.valueOf(Boolean.TRUE));
-                System.out.println(System.currentTimeMillis() + " " + Thread.currentThread().getId() + " get resLock!");
+                log("get resLock!");
                 return true;
             }
 
-            String childLockPath = lockPath + "/" + resName;
-            String currSeq = zk.create(childLockPath, resName.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
-            currSeq = currSeq.substring(currSeq.lastIndexOf("/") + 1);
-            threadlocal.get().put("currSeq", currSeq);
-            System.out.println("currSeq:" + currSeq);
+            String currSeq = threadlocal.get().get(PARAM_CURRSEQ);
+            if (currSeq == null) {
+                String childLockPath = lockPath + "/" + resName;
+                currSeq = zk.create(childLockPath, resName.getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL_SEQUENTIAL);
+                currSeq = currSeq.substring(currSeq.lastIndexOf("/") + 1);
+                threadlocal.get().put(PARAM_CURRSEQ, currSeq);
+            }
+
 
             List<String> children = zk.getChildren(lockPath, null);
-            System.out.println("child: " + children + " currSeq: " + currSeq);
+            log("children: " + children + " currSeq: " + currSeq);
             Collections.sort(children);
             if (currSeq.equals(children.get(0))) {
-                System.out.println(System.currentTimeMillis() + " " + Thread.currentThread().getId() + " get currLock[" + currSeq + "]");
+                log("get currLock: " + currSeq + " !");
                 return true;
             }
 
-            String preSeq = children.get(Collections.binarySearch(children, currSeq) - 1);
-            threadlocal.get().put("preSeq", preSeq);
-            System.out.println("preSeq:" + preSeq);
+            String preSeq = threadlocal.get().get(PARAM_PRESEQ);
+            Stat preSeqStat = null;
+            if (preSeq != null) {
+                preSeqStat = zk.exists(lockPath + '/' + preSeq, false);
+            }
+            if (preSeqStat == null) {
+                preSeq = children.get(Collections.binarySearch(children, currSeq) - 1);
+                threadlocal.get().put(PARAM_PRESEQ, preSeq);
+            }
         } catch (InterruptedException e) {
             e.printStackTrace();
         } catch (KeeperException e) {
@@ -78,17 +91,19 @@ public class ZKLock {
     public void unLock(String resName) {
         String lockPath = getLockPath(resName);
         try {
-            if (Boolean.parseBoolean(threadlocal.get().get("isFirst"))) {
-                threadlocal.get().put("isFirst", String.valueOf(Boolean.FALSE));
+            String resLockValue = new String(zk.getData(lockPath, null, null));
+            if (Boolean.parseBoolean(resLockValue)) {
                 Stat stat = zk.exists(lockPath, null);
                 zk.setData(lockPath, String.valueOf(Boolean.FALSE).getBytes(), stat.getVersion());
-                System.out.println(System.currentTimeMillis() + " " + Thread.currentThread().getId() + " release resLock");
+                log("release resLock...");
             } else {
-                String currSeq = threadlocal.get().get("currSeq");
+                String currSeq = threadlocal.get().get(PARAM_CURRSEQ);
                 String childLockPath = lockPath + "/" + currSeq;
                 Stat stat = zk.exists(childLockPath, null);
                 zk.delete(childLockPath, stat.getVersion());
-                System.out.println(System.currentTimeMillis() + " " + Thread.currentThread().getId() + " release currLock[" + currSeq + "]");
+                threadlocal.get().put(PARAM_PRESEQ, null);
+                threadlocal.get().put(PARAM_CURRSEQ, null);
+                log("release currLock:" + currSeq + "...");
             }
         } catch (KeeperException e) {
             e.printStackTrace();
@@ -102,7 +117,6 @@ public class ZKLock {
         try {
             final String resLock = new String(zk.getData(lockPath, null, null));
             final CountDownLatch latch = new CountDownLatch(1);
-            System.out.println(System.currentTimeMillis() + " " + Thread.currentThread().getId() + " wait resLock...");
             if (String.valueOf(Boolean.TRUE).equals(resLock)) {
                 zk.getData(lockPath, new Watcher() {
                     @Override
@@ -112,11 +126,11 @@ public class ZKLock {
                         }
                     }
                 }, null);
+                log("wait resLock...");
                 latch.await();
             } else {
-                String preSeq = threadlocal.get().get("preSeq");
+                String preSeq = threadlocal.get().get(PARAM_PRESEQ);
                 final String preNodePath = lockPath + "/" + preSeq;
-                System.out.println(System.currentTimeMillis() + " " + Thread.currentThread().getId() + " wait preSeq[" + preNodePath + "] release lock...");
                 zk.exists(preNodePath, new Watcher() {
                     @Override
                     public void process(WatchedEvent watchedEvent) {
@@ -126,8 +140,10 @@ public class ZKLock {
 
                     }
                 });
+                log("wait preSeq" + preSeq + "...");
                 latch.await();
             }
+            lock(resName, false);
         } catch (KeeperException e) {
             e.printStackTrace();
         } catch (InterruptedException e) {
@@ -136,8 +152,14 @@ public class ZKLock {
     }
 
     public void lock(String resName) {
-        Map<String, String> map = new HashMap<String, String>();
-        threadlocal.set(map);
+        lock(resName, true);
+    }
+
+    private void lock(String resName, boolean init) {
+        if (init) {
+            Map<String, String> map = new HashMap<String, String>();
+            threadlocal.set(map);
+        }
         if (tryLock(resName)) {
         } else {
             wait4Lock(resName);

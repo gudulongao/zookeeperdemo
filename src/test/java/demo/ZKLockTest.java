@@ -10,7 +10,9 @@ public class ZKLockTest {
         public void run() {
             lock.lock("tl");
             i++;
+            System.out.println(System.currentTimeMillis() + " " + Thread.currentThread().getId() + " result: " + i);
             lock.unLock("tl");
+
         }
 
         public TestThread(ZKLock lock) {
@@ -18,13 +20,14 @@ public class ZKLockTest {
         }
     }
 
-    public static void testLock() {
+    public static void testLock() throws InterruptedException {
         ZKLock lock = ZKLock.getInstance();
-        new TestThread(lock).start();
-        new TestThread(lock).start();
+        for (int i = 0; i < 1000; i++) {
+            new TestThread(lock).start();
+        }
     }
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws InterruptedException {
         testLock();
     }
 }
