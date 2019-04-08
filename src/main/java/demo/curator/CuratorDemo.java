@@ -34,7 +34,7 @@ public class CuratorDemo {
     }
 
 
-    private static CuratorFramework getWork() {
+    public static CuratorFramework getWork() {
         //定义重试策略
         RetryOneTime retryOneTime = new RetryOneTime(30000);
 
