@@ -165,6 +165,10 @@ public class ZKLock {
     /**
      * 等待锁
      */
+    /**
+     *
+     * @param resName
+     */
     private void wait4Lock(String resName) {
         //获取锁资源路径
         String lockPath = getLockPath(resName);
