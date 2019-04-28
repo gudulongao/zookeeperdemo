@@ -9,9 +9,13 @@ import java.util.Date;
 import java.util.List;
 
 public class ZookeeperDemo {
-    public static final String CONNET = "127.0.0.1:2182";
+    public static final String ADDRESS = "127.0.0.1:2182";
 
     public static final int SESSION_TIMEOUT = 500;
+
+    private static void log(String mess) {
+        System.out.println(System.currentTimeMillis() + " " + Thread.currentThread().getName() + " " + mess);
+    }
 
     /**
      * 获取状态信息
@@ -39,119 +43,134 @@ public class ZookeeperDemo {
      * 基本操作
      */
     public static void testBaseAPI() {
+        ZooKeeper client = null;
         try {
             //创建连接
-            ZooKeeper client = new ZooKeeper(CONNET, SESSION_TIMEOUT, null);
+            client = new ZooKeeper(ADDRESS, SESSION_TIMEOUT, null);
             //查询根目录下的节点
             List<String> children = client.getChildren("/", null);
-            System.out.println(children);
+            log("children: " + children);
 
+            client.create("/test", "test".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
             //获取节点/test的数据
             byte[] data = client.getData("/test", null, null);
-            System.out.println(new String(data));
-
+            log("data: " + new String(data));
             //获取节点/test的状态数据
             Stat state = client.exists("/test", null);
-            System.out.println(getState(state) + "\n");
+            log("stat: " + getState(state));
 
             //更新节点/test的数据，需要基于版本号来更新（乐观锁），如果版本号=-1 则强制更新
             state = client.setData("/test", "tl1".getBytes(), state.getVersion());
-            System.out.println(getState(state));
+            log("stat: " + getState(state));
             data = client.getData("/test", null, null);
-            System.out.println(new String(data));
+            log("stat: " + getState(state));
 
             state = client.setData("/test", "tl3".getBytes(), -1);
-            System.out.println(getState(state));
+            log("stat: " + getState(state));
             data = client.getData("/test", null, null);
-            System.out.println(new String(data));
+            log("stat: " + getState(state));
 
             //创建节点
-            String result = client.create("/test/child", "child".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-            System.out.println(result);
+            String result = client.create("/test/child", "child".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode
+                    .PERSISTENT);
+
+            client.delete("/test/child", -1);
+            client.delete("/test", -1);
+            log("result: " + result);
         } catch (IOException e) {
             e.printStackTrace();
         } catch (InterruptedException e) {
             e.printStackTrace();
         } catch (KeeperException e) {
             e.printStackTrace();
+        } finally {
+            if (client != null) {
+                try {
+                    client.close();
+                } catch (InterruptedException ignored) {
+                }
+            }
         }
     }
 
     public static void testWathcer() {
+        ZooKeeper client = null;
         try {
             //创建连接（带监听）
-            ZooKeeper zk = new ZooKeeper(CONNET, SESSION_TIMEOUT, null);
-            zk.create("/test", "test".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+            client = new ZooKeeper(ADDRESS, SESSION_TIMEOUT, null);
+            client.create("/test", "test".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
             //通过getData操作添加监听
             //getData的监听只能通过delete和setData触发
             //同时这个监听只能触发一次。如果有两次delete/setData 第二次的操作就不会触发。
-            System.out.println("get data...");
-            byte[] data = zk.getData("/test", new Watcher() {
+            byte[] data = client.getData("/test", new Watcher() {
                 @Override
                 public void process(WatchedEvent watchedEvent) {
-                    System.out.println(watchedEvent.getState() + " " + watchedEvent.getPath() + " " + watchedEvent.getType());
+                    log(" path:" + watchedEvent.getPath() + " type: " + watchedEvent.getType());
 
                 }
             }, null);
-            System.out.println("get data: " + new String(data));
+            log("data: " + new String(data));
 
-//            System.out.println("get data...");
-//            data = zk.getData("/test", true, null);
-//            System.out.println("get data result: " + new String(data));
-
-//            System.out.println("change data...");
-//            zk.setData("/test", "change".getBytes(), -1);
-
-//            System.out.println("chaneg data...");
-//            zk.setData("/test", "change2".getBytes(), -1);
-
-            System.out.println("delete node...");
-            zk.delete("/test", -1);
+            log("delete...");
+            client.delete("/test", -1);
         } catch (IOException e) {
             e.printStackTrace();
         } catch (InterruptedException e) {
             e.printStackTrace();
         } catch (KeeperException e) {
             e.printStackTrace();
+        } finally {
+            if (client != null) {
+                try {
+                    client.close();
+                } catch (InterruptedException ignored) {
+                }
+            }
         }
     }
 
     public static void testDeleteClose() {
-        //创建连接（带监听）
+        ZooKeeper client = null;
         try {
-            ZooKeeper zk = new ZooKeeper(CONNET, SESSION_TIMEOUT, null);
-
-            zk.create("/test", "test".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
-            Stat stat = zk.exists("/test", null);
-            zk.getData("/test", new Watcher() {
+            //创建连接
+            client = new ZooKeeper(ADDRESS, SESSION_TIMEOUT, null);
+            //创建节点
+            client.create("/test", "test".getBytes(), ZooDefs.Ids.OPEN_ACL_UNSAFE, CreateMode.PERSISTENT);
+            //获取节点状态信息
+            Stat stat = client.exists("/test", null);
+            //对节点添加监听
+            client.getData("/test", new Watcher() {
                 @Override
                 public void process(WatchedEvent watchedEvent) {
-                    System.out.println(watchedEvent.getType());
-                    System.out.println(watchedEvent.getPath());
-                    System.out.println(watchedEvent.getState());
-                    System.out.println("delete ...");
+                    log(" path: " + watchedEvent.getPath() + " event: " + watchedEvent.getType());
                 }
             }, stat);
-            zk.delete("/test", -1);
 
+            //删除节点
+            log("delete...");
+            client.delete("/test", -1);
 
-//            zk.close();
-//
-            Thread.sleep(10000);
-//            zk.close();
-            System.out.println(zk.getState().isAlive());
+            Thread.sleep(1000);
         } catch (IOException e) {
             e.printStackTrace();
         } catch (InterruptedException e) {
             e.printStackTrace();
         } catch (KeeperException e) {
             e.printStackTrace();
+        } finally {
+            if (client != null) {
+                try {
+                    client.close();
+                } catch (InterruptedException ignored) {
+                }
+            }
         }
     }
 
     public static void main(String[] args) {
-        testDeleteClose();
-//        testWathcer();
+//        testBaseAPI();
+//        testDeleteClose();
+        testWathcer();
     }
 
 }
